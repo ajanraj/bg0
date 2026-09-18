@@ -80,13 +80,53 @@ Transformers.js 4 ran the full export's GPU operators in that environment;
 3.8.1 failed the full 512px graph, and the unpatched 1024px full export exceeded
 the tested adapter's shader binding limits despite sufficient RAM.
 
+### iOS memory-constrained inference
+
+On iPhone/iPad (including desktop-mode iPad), the browser package uses a dedicated
+single-threaded plain-WASM worker and a portable 512px quantized BiRefNet-lite
+export. Desktop/Android model and provider selection are unchanged. No selector,
+server inference, or image upload is introduced. See `docs/ios-model.md` for model
+provenance, reproduction, measurement limits, and the temporary review asset host.
+
+The optimized graph replaces deformable-convolution expansion with sequential
+per-tap GridSample operations, deduplicates weights, and uses dynamic uint8
+Conv/MatMul quantization. Its weights derive from the official BiRefNet-lite
+checkpoint, not a different network family. Quantization can change results.
+
+Before loading, reduce the decoded photo to 512px pixels and release its bitmap.
+iOS skips eager warming/full-photo processing previews. After inference, exports
+and the Compare source are capped at 1280px longest-edge (disclosed by the UI).
+The quality option retains the optional focused refinement pass. This cap is a
+reviewable memory/quality tradeoff, not a claim of original-resolution export.
+
+Calls are serialized; repeated calls reuse the worker. Abort terminates it and
+settles pending requests. Cache reset defers retirement until active work ends.
+Buffers are transferred rather than cloned. Model-load failures are retryable;
+no fallback to the known memory-heavy iPhone model is attempted. The worker does
+not bypass Safari's per-tab memory budget.
+
+PNG compositing uses one output canvas, releasing temporary mask/output buffers
+after encoding (including failure paths). This allocation improvement is shared
+with desktop/Android; pixel equivalence is covered separately.
+
+Contributor confirmed both experimental variants on an iPhone 13, including a
+camera portrait with visually comparable hair to desktop. The integrated UI
+also completed all three supplied fixtures on a physical iPhone 13, including a
+synthetic 4032×3024 image. Downloaded RGBA PNG dimensions and transparency were
+verified. The exact five-run/no-refresh sequence and refinement interactions
+were not separately confirmed; iPad/other iPhones remain unverified.
+
 ## Model cache
 
-On HTTPS, Transformers.js uses the browser Cache API. Development origins that
+Desktop/Android: on HTTPS, Transformers.js uses the browser Cache API. Development origins that
 cannot use Cache Storage fall back to BG0's IndexedDB adapter. Calls in the same
 page reuse an initialized engine. A reload can reuse stored model files but must
 still initialize ONNX and upload weights to WebGPU. Browser storage eviction,
 private browsing, or clearing site data can require another download.
+
+iOS uses same-origin build-emitted, content-hashed assets and the normal HTTP
+cache; cache eviction/private browsing can require a fresh download. Reloading
+still initializes the worker. No photo or mask is persisted.
 
 ## Deployment
 

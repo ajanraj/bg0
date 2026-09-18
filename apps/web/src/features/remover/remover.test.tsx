@@ -14,7 +14,6 @@ import {
 } from '@testing-library/react'
 
 import {
-  isIPhone,
   Remover,
   waitForNextPaint,
   warmBackgroundRemovalModel,
@@ -45,17 +44,7 @@ const IPHONE_SAFARI_USER_AGENT =
 const MAC_SAFARI_USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/27.0 Safari/605.1.15'
 
-describe('iPhone memory warning', () => {
-  test('detects iPhone without treating Mac or iPad as iPhone', () => {
-    expect(isIPhone(IPHONE_SAFARI_USER_AGENT)).toBe(true)
-    expect(isIPhone(MAC_SAFARI_USER_AGENT)).toBe(false)
-    expect(
-      isIPhone(
-        'Mozilla/5.0 (iPad; CPU OS 18_7 like Mac OS X) AppleWebKit/605.1.15 Version/27.0 Mobile/15E148 Safari/604.1',
-      ),
-    ).toBe(false)
-  })
-
+describe('iOS export notice', () => {
   test('does not warm the model on iPhone', () => {
     const prepare = mock(() => Promise.resolve('wasm' as const))
 
@@ -64,6 +53,15 @@ describe('iPhone memory warning', () => {
 
     warmBackgroundRemovalModel(MAC_SAFARI_USER_AGENT, prepare)
     expect(prepare).toHaveBeenCalledTimes(1)
+  })
+
+  test('warms Android normally but not desktop-mode iPad', () => {
+    const prepare = mock(() => Promise.resolve('wasm' as const))
+    warmBackgroundRemovalModel('Android Chrome/150.0 Mobile', prepare, 5)
+    expect(prepare).toHaveBeenCalledTimes(1)
+    prepare.mockClear()
+    warmBackgroundRemovalModel(MAC_SAFARI_USER_AGENT, prepare, 5)
+    expect(prepare).not.toHaveBeenCalled()
   })
 
   test('does not warm the model when saveData or slow connection is active', () => {
@@ -99,37 +97,98 @@ describe('iPhone memory warning', () => {
     }
   })
 
-  test('renders only for an iPhone browser', async () => {
+  test('does not decode a full-resolution processing preview on phones', async () => {
     const originalUserAgent = navigator.userAgent
-
+    const urls = trackObjectUrls()
     try {
-      Object.defineProperty(navigator, 'userAgent', {
-        configurable: true,
-        value: MAC_SAFARI_USER_AGENT,
-      })
-      const desktopView = render(<Remover />)
-      expect(
-        desktopView.queryByText(/probably won’t work on iPhone/),
-      ).toBeNull()
-      desktopView.unmount()
-
-      Object.defineProperty(navigator, 'userAgent', {
-        configurable: true,
-        value: IPHONE_SAFARI_USER_AGENT,
-      })
-      const iPhoneView = render(<Remover />)
-      await waitFor(() => {
+      for (const userAgent of [IPHONE_SAFARI_USER_AGENT, 'iPad Safari/605.1']) {
+        Object.defineProperty(navigator, 'userAgent', {
+          configurable: true,
+          value: userAgent,
+        })
+        const request = deferred<BackgroundRemovalResult>()
+        const view = render(
+          <Remover
+            removeBackgroundImpl={() => request.promise}
+            waitForPaintImpl={() => Promise.resolve()}
+          />,
+        )
+        selectFile(
+          view,
+          new File(['image'], 'photo.png', { type: 'image/png' }),
+        )
+        expect(view.getByText('Preparing…')).toBeTruthy()
         expect(
-          iPhoneView.getByText(/probably won’t work on iPhone/),
-        ).toBeTruthy()
-      })
+          view.queryByRole('img', { name: 'Original being processed' }),
+        ).toBeNull()
+        view.unmount()
+      }
     } finally {
       Object.defineProperty(navigator, 'userAgent', {
         configurable: true,
         value: originalUserAgent,
       })
+      urls.restore()
     }
   })
+
+  test.each([
+    ['iPhone', IPHONE_SAFARI_USER_AGENT, 5, true],
+    [
+      'iPad',
+      'Mozilla/5.0 (iPad; CPU OS 18_7 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1',
+      5,
+      true,
+    ],
+    ['desktop-mode iPad', MAC_SAFARI_USER_AGENT, 5, true],
+    ['Mac', MAC_SAFARI_USER_AGENT, 0, false],
+    [
+      'Android',
+      'Mozilla/5.0 (Linux; Android 15) Chrome/150.0 Mobile',
+      5,
+      false,
+    ],
+  ] as const)(
+    'discloses the export cap correctly on %s',
+    async (_name, userAgent, maxTouchPoints, expected) => {
+      const originalUserAgent = Object.getOwnPropertyDescriptor(
+        navigator,
+        'userAgent',
+      )
+      const originalTouchPoints = Object.getOwnPropertyDescriptor(
+        navigator,
+        'maxTouchPoints',
+      )
+      try {
+        Object.defineProperty(navigator, 'userAgent', {
+          configurable: true,
+          value: userAgent,
+        })
+        Object.defineProperty(navigator, 'maxTouchPoints', {
+          configurable: true,
+          value: maxTouchPoints,
+        })
+        const view = render(<Remover />)
+        await waitFor(() => {
+          expect(Boolean(view.queryByText(/exports up to 1280px/))).toBe(
+            expected,
+          )
+        })
+        view.unmount()
+      } finally {
+        if (originalUserAgent)
+          Object.defineProperty(navigator, 'userAgent', originalUserAgent)
+        else Reflect.deleteProperty(navigator, 'userAgent')
+        if (originalTouchPoints)
+          Object.defineProperty(
+            navigator,
+            'maxTouchPoints',
+            originalTouchPoints,
+          )
+        else Reflect.deleteProperty(navigator, 'maxTouchPoints')
+      }
+    },
+  )
 })
 
 describe('Remover image pickers', () => {

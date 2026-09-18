@@ -24,6 +24,14 @@ import {
 } from './models'
 import { createMaskRefinement, type InferenceMask } from './refinement'
 import { canUseOnnxWebGpu, shouldUseSingleThreadedWasm } from './runtime'
+import { clearIosModel, prepareIosModel, removeIosBackground } from './ios'
+
+function useIosModel() {
+  return (
+    typeof navigator !== 'undefined' &&
+    shouldUseSingleThreadedWasm(navigator.userAgent, navigator.maxTouchPoints)
+  )
+}
 
 export {
   BackgroundRemovalError,
@@ -36,6 +44,7 @@ export {
 } from './image'
 
 export type RemovalQuality = 'fast' | 'quality'
+export { shouldUseSingleThreadedWasm as isIosBrowser } from './runtime'
 export type { ExecutionProvider, RemovalModel } from './models'
 
 export interface RemovalProgress {
@@ -117,6 +126,7 @@ export function getBrowserCapabilities(): BrowserCapabilities {
 }
 
 export function clearModelCache(): void {
+  clearIosModel()
   for (const load of engineLoads.values()) {
     void retireEngine(load)
   }
@@ -137,6 +147,7 @@ export function clearModelCache(): void {
  * Concurrent calls share the same initialization work with removeBackground.
  */
 export async function prepareBackgroundRemoval(): Promise<ExecutionProvider> {
+  if (useIosModel()) return prepareIosModel()
   const lease = await getPreferredEngine(
     await getPreferredChoices(),
     () => undefined,
@@ -152,6 +163,7 @@ export async function removeBackground(
   input: Blob,
   options: RemoveBackgroundOptions = {},
 ): Promise<BackgroundRemovalResult> {
+  if (useIosModel()) return removeIosBackground(input, options)
   const startedAt = performance.now()
   const quality = options.quality ?? 'fast'
   let reportedProgress = 0
@@ -618,14 +630,6 @@ async function loadEngine(
   const { AutoModel, AutoProcessor, env } = await import(
     '@huggingface/transformers'
   )
-  if (
-    provider === 'wasm' &&
-    typeof navigator !== 'undefined' &&
-    env.backends.onnx.wasm &&
-    shouldUseSingleThreadedWasm(navigator.userAgent, navigator.maxTouchPoints)
-  ) {
-    env.backends.onnx.wasm.numThreads = 1
-  }
   // The Cache API only exists in secure contexts. Fall back to IndexedDB so
   // the model is still cached on plain-http previews and older browsers.
   if (typeof caches !== 'undefined') {
