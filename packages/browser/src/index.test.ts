@@ -463,6 +463,28 @@ describe('HEIC sources', () => {
     expect(result.sourceBlob).toBe(transcoded)
   })
 
+  test('cancellation during the HEIC decode skips the PNG transcode', async () => {
+    const controller = new AbortController()
+    const heicBitmap = {
+      width: 800,
+      height: 600,
+      close: mock(() => undefined),
+    }
+    const transcoded = new Blob(['transcoded'], { type: 'image/png' })
+    spyOn(image, 'decodeImage').mockImplementation(async () => {
+      controller.abort()
+      return heicBitmap as ImageBitmap
+    })
+    const toPng = spyOn(image, 'imageToPng').mockResolvedValue(transcoded)
+    spyOn(AutoModel, 'from_pretrained').mockResolvedValue(model() as never)
+
+    await expect(
+      removeBackground(heic, { signal: controller.signal }),
+    ).rejects.toMatchObject({ code: 'cancelled' })
+    expect(toPng).not.toHaveBeenCalled()
+    expect(heicBitmap.close).toHaveBeenCalledTimes(1)
+  })
+
   test('returns no sourceBlob for natively displayable formats', async () => {
     const toPng = spyOn(image, 'imageToPng')
     spyOn(AutoModel, 'from_pretrained').mockResolvedValue(model() as never)

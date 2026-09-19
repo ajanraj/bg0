@@ -187,6 +187,7 @@ export async function removeBackground(
     if (format === 'heic') {
       const image = await decodeImage(input, format)
       try {
+        throwIfCancelled(options.signal)
         sourceBlob = await imageToPng(image)
       } finally {
         image.close()
