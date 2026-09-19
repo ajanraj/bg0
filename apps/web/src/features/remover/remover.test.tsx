@@ -270,14 +270,9 @@ describe('Remover image pickers', () => {
 
     try {
       selectFile(view, new File(['heic'], 'photo.heic', { type: 'image/heic' }))
-      fireEvent.error(
-        view.getByRole('img', { name: 'Original being processed' }),
-      )
-
-      expect(
-        view.queryByRole('img', { name: 'Original being processed' }),
-      ).toBeNull()
-      expect(view.getByText('Preparing…')).toBeTruthy()
+      const first = view.getByRole('img', {
+        name: 'Original being processed',
+      })
 
       selectFile(view, new File(['image'], 'photo.png', { type: 'image/png' }))
       expect(
@@ -285,6 +280,32 @@ describe('Remover image pickers', () => {
           .getByRole('img', { name: 'Original being processed' })
           .getAttribute('src'),
       ).toBe('blob:test-2')
+      expect(first.isConnected).toBe(false)
+
+      fireEvent.error(first)
+      expect(
+        view
+          .getByRole('img', { name: 'Original being processed' })
+          .getAttribute('src'),
+      ).toBe('blob:test-2')
+
+      fireEvent.error(
+        view.getByRole('img', { name: 'Original being processed' }),
+      )
+      expect(
+        view.queryByRole('img', { name: 'Original being processed' }),
+      ).toBeNull()
+      expect(view.getByText('Preparing…')).toBeTruthy()
+
+      selectFile(
+        view,
+        new File(['image2'], 'photo-2.png', { type: 'image/png' }),
+      )
+      expect(
+        view
+          .getByRole('img', { name: 'Original being processed' })
+          .getAttribute('src'),
+      ).toBe('blob:test-3')
     } finally {
       view.unmount()
       urls.restore()
